@@ -29,6 +29,53 @@ def boot_packet(rows: list[dict[str, Any]], *, limit: int) -> dict[str, Any]:
     }
 
 
+def recall_packet(
+    *,
+    intent: str,
+    pin: list[dict[str, Any]],
+    decide: list[dict[str, Any]],
+    evidence: list[dict[str, Any]],
+    conflicts: list[dict[str, Any]],
+    do_not_use: list[str],
+    density_high: bool,
+    query: str,
+) -> dict[str, Any]:
+    reason = None
+    if not pin and not decide and not evidence:
+        reason = "no_hits"
+    elif density_high:
+        reason = "ambiguous_near_duplicates"
+    elif conflicts:
+        reason = "unresolved_conflict"
+    elif intent == "episode" and evidence:
+        reason = None
+    available = ["get_memory", "search_chat"]
+    return {
+        "query_intent": intent,
+        "query": query,
+        "pin": pin,
+        "decide": decide,
+        "evidence": evidence,
+        "conflicts": conflicts,
+        "do_not_use": do_not_use,
+        "escalation": {"available": available, "reason": reason},
+        "meta": {
+            "status_filter": "active",
+            "density_high": density_high,
+        },
+    }
+
+
+def scored_item(row: dict[str, Any], *, authority: str) -> dict[str, Any]:
+    item = _item(row)
+    item["authority"] = authority
+    if row.get("score") is not None:
+        item["score"] = float(row["score"])
+    if row.get("why"):
+        item["why"] = row["why"]
+    return item
+
+
 def _item(row: dict[str, Any]) -> dict[str, Any]:
     mid = str(row["id"])
     return {

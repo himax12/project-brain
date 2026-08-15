@@ -1,63 +1,114 @@
 # Project Brain
 
-Governed project memory for coding agents: **retrieve / reuse / modify** decisions in CockroachDB.
+Governed **project decisions** for coding agents (Cursor / Claude). CockroachDB is the source of truth. Agents **retrieve, reuse, and modify** decisions through MCP; humans confirm in a Next.js inbox.
 
-**Phase:** 1 spine (schema + SQL + FastAPI + MCP). Next.js UI is Phase 3.
+This is a **connector over the chatbot**, not a replacement chat UI.
+
+## One-sentence demo
+
+Empty brain → save a decision → confirm → **new session reuses it** (`must_not` pins first) → mid-task **recall packet** → **supersede** → recall shows the old id in `do_not_use` → the row is visible in CockroachDB (SQL or Managed MCP).
 
 ## Stack
 
 | Layer | Choice |
 |---|---|
-| Package manager | **uv** |
+| Package manager | **uv** (Python 3.12) |
 | API | **FastAPI** |
-| UI | **Next.js** (`apps/web`, Phase 3) |
+| UI | **Next.js 15** (App Router) — Node 22 LTS |
 | Agent | Memory MCP (stdio) |
-| DB | CockroachDB Cloud + `VECTOR(1024)` |
-| Lean pack | E explicit extract · B `must_not` pins · F `invalid_at` |
+| Workflow | **LangGraph** (`session_boot`, `memory_recall`) |
+| DB | **CockroachDB Cloud** `VECTOR(1024)` + **Managed MCP** |
+| AWS | **Bedrock** Titan Text Embeddings V2 (1024) + Claude Haiku extract |
+| Lean pack | **E** explicit extract only · **B** `must_not` pins first · **F** `invalid_at` on supersede |
+
+```text
+Cursor MCP ──in-process──► Python package (db / graphs / services)
+Next.js    ──HTTP────────► FastAPI ──► same package
+                                 ▼
+                    CockroachDB Cloud  (+ Bedrock on confirm/extract)
+```
+
+**CockroachDB tools used:** Distributed **VECTOR** indexing · **Managed MCP** (second server in `configs/mcp.json.example`).  
+**AWS service used:** Amazon **Bedrock**. Set `EMBED_STUB=1` to run without AWS (deterministic stub vectors).
 
 ## Layout
 
 ```text
-apps/api     Python (uv) — FastAPI + MCP + db
-apps/web     Next.js — HITL UI (Phase 3)
-sql/         001_schema.sql
+apps/api     uv Python — FastAPI + MCP + LangGraph
+apps/web     Next.js HITL (pending / context / recall)
+sql/         001_schema.sql, 002_vector_index.sql
 scripts/     migrate.py, smoke_v0.py
 configs/     mcp.json.example
 ```
 
-```text
-Next.js ──HTTP──► FastAPI ──► db / graphs / services
-MCP     ──in-process──► same package
-                         ▼
-                    CockroachDB
-```
+## Setup
 
-## Run (Phase 1)
+1. Create a CockroachDB Cloud cluster. Copy the Postgres URL.
+2. Copy `.env.example` → `.env` at the repo root. Set `DATABASE_URL`.
+3. Optional: AWS keys + Bedrock model access; then `EMBED_STUB=0`.
+4. Migrate and smoke:
 
 ```powershell
-cd C:\Users\ghima\Desktop\project-brain
-copy .env.example .env
-# edit .env → DATABASE_URL from CockroachDB Cloud
-
-cd apps\api
+cd C:\Users\ghima\Desktop\project-brain\apps\api
 uv sync --extra dev
 uv run python ..\..\scripts\migrate.py
 uv run python ..\..\scripts\smoke_v0.py
 uv run pytest
+```
+
+5. API:
+
+```powershell
 uv run uvicorn project_brain.api.main:app --reload --app-dir src
 ```
 
 - Health: http://127.0.0.1:8000/healthz  
-- Swagger: http://127.0.0.1:8000/docs — send header `X-API-Key: dev-local-key-change-me`
+- Swagger: http://127.0.0.1:8000/docs — header `X-API-Key: dev-local-key-change-me`
+
+6. UI (Node 22):
+
+```powershell
+cd C:\Users\ghima\Desktop\project-brain\apps\web
+copy .env.example .env.local
+npm install
+npm run dev
+```
+
+http://localhost:3000 → pending inbox.
 
 ### MCP (Cursor)
 
-Copy `configs/mcp.json.example` into Cursor MCP config. Restart Cursor, then:
+Copy `configs/mcp.json.example` into Cursor MCP settings. Fix `--directory` to this clone. Paste **Cockroach Managed MCP** URL/token from the Cloud console into the `cockroachdb` server block.
 
-1. `remember` with `polarity=must_not`  
-2. `confirm_memory`  
-3. New chat: `get_context` — never-X should pin first  
+Restart Cursor, then:
 
-## Gate
+1. `remember` with `polarity=must_not`
+2. `confirm_memory`
+3. New chat: `get_context` — never-X should pin first
+4. `recall` with a policy question — packet, not a flat list
+5. Managed MCP: `SELECT id, statement, status FROM memories WHERE status = 'active';`
 
-Do not start Next.js until you sign Phase 1 (and Phase 2) in the planning repo `phases/GATES.md`.
+### CockroachDB Skills (optional maximize)
+
+```powershell
+npx skills add cockroachlabs/cockroachdb-skills
+```
+
+Use Skills while writing SQL / VECTOR DDL; Project Brain still owns product memory.
+
+## Memory rules
+
+| Path | Behavior |
+|---|---|
+| Extract / remember | Always `pending_review` (Lean E) |
+| Confirm | `active` + embedding (Titan or stub) |
+| `get_context` | `status = active` only, `must_not` first (Lean B) |
+| Supersede | old `invalid_at` + `superseded`; recall `do_not_use` (Lean F) |
+| Deny-list | secrets, prefs, one-off tasks never become pending |
+| Conflict | overlapping / polarity clash stays pending until `resolve_conflict` |
+
+## Video / Devpost
+
+See [DEVPOST.md](./DEVPOST.md). License: [MIT](./LICENSE).
+
+Repo is private until you switch it public for submission: `gh repo edit himax12/project-brain --visibility public`.
