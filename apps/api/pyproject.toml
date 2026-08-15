@@ -1,0 +1,40 @@
+[project]
+name = "project-brain"
+version = "0.1.0"
+description = "Governed project memory for coding agents (CockroachDB + LangGraph + FastAPI + MCP)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "httpx>=0.27.0",
+    "psycopg[binary]>=3.2.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "python-dotenv>=1.0.0",
+    "mcp>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[project.scripts]
+project-brain-api = "project_brain.api.main:run"
+project-brain-mcp = "project_brain.mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/project_brain"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/project_brain"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
