@@ -5,10 +5,15 @@ from uuid import UUID
 from mcp.server.mcpserver import MCPServer
 
 from project_brain.config import get_settings
+from project_brain.db.chat import ChatRepo, public_chat
 from project_brain.db.memories import MemoryRepo
 from project_brain.db.pool import get_connection
+from project_brain.graphs.memory_recall import recall
 from project_brain.graphs.session_boot import get_context
+from project_brain.serialize import public_memory
 from project_brain.services.deny_list import deny_reason
+from project_brain.services.embeddings import embed_text
+from project_brain.services.governance import confirm_and_embed, ingest_session, remember_decision
 
 mcp = MCPServer("project-brain")
 
@@ -16,18 +21,6 @@ mcp = MCPServer("project-brain")
 def _scope(org_id: str | None, repo_id: str | None) -> tuple[str, str]:
     s = get_settings()
     return org_id or s.default_org_id, repo_id or s.default_repo_id
-
-
-def _public(row: dict) -> dict:
-    out = dict(row)
-    out["id"] = str(out["id"])
-    if out.get("supersedes_id"):
-        out["supersedes_id"] = str(out["supersedes_id"])
-    out.pop("embedding", None)
-    for key in ("created_at", "updated_at", "invalid_at"):
-        if out.get(key) is not None:
-            out[key] = out[key].isoformat()
-    return out
 
 
 @mcp.tool()
@@ -41,21 +34,16 @@ def remember(
     actor: str | None = None,
 ) -> dict:
     """Save a lasting project decision as pending_review (not yet law)."""
-    reason = deny_reason(statement)
-    if reason:
-        return {"ok": False, "denied": reason}
     org_id, repo_id = _scope(org_id, repo_id)
-    with get_connection() as conn:
-        row = MemoryRepo(conn).insert_pending(
-            org_id=org_id,
-            repo_id=repo_id,
-            statement=statement,
-            rationale=rationale,
-            category=category,
-            polarity=polarity,
-            actor=actor,
-        )
-    return {"ok": True, "status": "pending_review", **_public(row)}
+    return remember_decision(
+        org_id=org_id,
+        repo_id=repo_id,
+        statement=statement,
+        rationale=rationale,
+        category=category,
+        polarity=polarity,
+        actor=actor,
+    )
 
 
 @mcp.tool()
@@ -64,7 +52,7 @@ def list_pending(org_id: str | None = None, repo_id: str | None = None, limit: i
     org_id, repo_id = _scope(org_id, repo_id)
     with get_connection() as conn:
         items = MemoryRepo(conn).list_pending(org_id, repo_id, limit=limit)
-    return {"items": [_public(i) for i in items]}
+    return {"items": [public_memory(i) for i in items]}
 
 
 @mcp.tool(name="get_context")
@@ -78,6 +66,82 @@ def get_context_tool(
     return get_context(org_id, repo_id, limit=limit)
 
 
+@mcp.tool(name="recall")
+def recall_memory(
+    query: str,
+    org_id: str | None = None,
+    repo_id: str | None = None,
+    intent_hint: str | None = None,
+) -> dict:
+    """Mid-task authority packet (pin/decide/do_not_use), not a flat score list."""
+    org_id, repo_id = _scope(org_id, repo_id)
+    return recall(org_id, repo_id, query, intent_hint=intent_hint)
+
+
+@mcp.tool(name="ingest_session")
+def ingest_session_tool(
+    transcript: str,
+    session_id: str = "explicit",
+    org_id: str | None = None,
+    repo_id: str | None = None,
+    actor: str | None = None,
+) -> dict:
+    """Explicit extract only (Lean E). Candidates stay pending_review."""
+    org_id, repo_id = _scope(org_id, repo_id)
+    return ingest_session(
+        org_id=org_id,
+        repo_id=repo_id,
+        transcript=transcript,
+        session_id=session_id,
+        actor=actor,
+    )
+
+
+@mcp.tool()
+def search_chat(
+    query: str,
+    org_id: str | None = None,
+    repo_id: str | None = None,
+    session_id: str | None = None,
+) -> dict:
+    """Chat evidence only — never must_obey."""
+    org_id, repo_id = _scope(org_id, repo_id)
+    with get_connection() as conn:
+        items = ChatRepo(conn).search(org_id, repo_id, query, session_id=session_id)
+    return {"items": [public_chat(i) for i in items], "authority": "evidence"}
+
+
+@mcp.tool()
+def resolve_conflict(
+    pending_id: str,
+    existing_id: str,
+    choice: str,
+    org_id: str | None = None,
+    repo_id: str | None = None,
+    actor: str | None = None,
+) -> dict:
+    """keep_existing rejects the pending row; switch_to_pending supersedes the active one."""
+    org_id, repo_id = _scope(org_id, repo_id)
+    try:
+        with get_connection() as conn:
+            repo = MemoryRepo(conn)
+            if choice == "keep_existing":
+                row = repo.reject(UUID(pending_id), org_id, repo_id, actor=actor)
+                return {"ok": True, "rejected": public_memory(row)}
+            if choice != "switch_to_pending":
+                return {"ok": False, "error": "choice must be keep_existing or switch_to_pending"}
+            result = repo.resolve_switch(
+                UUID(pending_id), UUID(existing_id), org_id, repo_id, actor=actor
+            )
+            try:
+                repo.set_embedding(result["new"]["id"], embed_text(str(result["new"]["statement"])))
+            except Exception:
+                pass
+            return {"ok": True, "old": public_memory(result["old"]), "new": public_memory(result["new"])}
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+
+
 @mcp.tool()
 def confirm_memory(
     pending_id: str,
@@ -85,14 +149,13 @@ def confirm_memory(
     repo_id: str | None = None,
     actor: str | None = None,
 ) -> dict:
-    """Promote pending_review → active (project law)."""
+    """Promote pending_review → active (project law) and write embedding."""
     org_id, repo_id = _scope(org_id, repo_id)
     try:
-        with get_connection() as conn:
-            row = MemoryRepo(conn).confirm(UUID(pending_id), org_id, repo_id, actor=actor)
+        row = confirm_and_embed(UUID(pending_id), org_id, repo_id, actor=actor)
     except ValueError as e:
         return {"ok": False, "error": str(e)}
-    return {"ok": True, **_public(row)}
+    return {"ok": True, **row}
 
 
 @mcp.tool()
@@ -109,7 +172,7 @@ def reject_memory(
             row = MemoryRepo(conn).reject(UUID(pending_id), org_id, repo_id, actor=actor)
     except ValueError as e:
         return {"ok": False, "error": str(e)}
-    return {"ok": True, **_public(row)}
+    return {"ok": True, **public_memory(row)}
 
 
 @mcp.tool()
@@ -124,7 +187,7 @@ def get_memory(
         row = MemoryRepo(conn).get(UUID(memory_id), org_id, repo_id)
     if not row:
         return {"ok": False, "error": "not found"}
-    return {"ok": True, **_public(row)}
+    return {"ok": True, **public_memory(row)}
 
 
 @mcp.tool()
@@ -153,12 +216,16 @@ def supersede_memory(
                 polarity=polarity,
                 actor=actor,
             )
+            try:
+                MemoryRepo(conn).set_embedding(result["new"]["id"], embed_text(statement))
+            except Exception:
+                pass
     except ValueError as e:
         return {"ok": False, "error": str(e)}
     return {
         "ok": True,
-        "old": _public(result["old"]),
-        "new": _public(result["new"]),
+        "old": public_memory(result["old"]),
+        "new": public_memory(result["new"]),
     }
 
 

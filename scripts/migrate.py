@@ -6,7 +6,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "apps" / "api" / "src"))
 
-from project_brain.config import get_settings  # noqa: E402
 from project_brain.db.pool import connect  # noqa: E402
 
 
@@ -29,15 +28,26 @@ def _statements(sql: str) -> list[str]:
     return parts
 
 
+def apply_file(conn, path: Path, *, optional: bool = False) -> None:
+    sql = path.read_text(encoding="utf-8")
+    for stmt in _statements(sql):
+        try:
+            conn.execute(stmt)
+        except Exception as exc:
+            if optional:
+                print(f"skip optional {path.name}: {exc}")
+                conn.rollback()
+                return
+            raise
+    conn.commit()
+    print(f"applied {path}")
+
+
 def main() -> None:
-    settings = get_settings()
-    sql = settings.schema_path.read_text(encoding="utf-8")
     conn = connect()
     try:
-        for stmt in _statements(sql):
-            conn.execute(stmt)
-        conn.commit()
-        print(f"applied {settings.schema_path}")
+        apply_file(conn, ROOT / "sql" / "001_schema.sql")
+        apply_file(conn, ROOT / "sql" / "002_vector_index.sql", optional=True)
     finally:
         conn.close()
 

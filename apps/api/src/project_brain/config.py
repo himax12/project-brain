@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     bedrock_embed_model: str = "amazon.titan-embed-text-v2:0"
-    bedrock_chat_model: str = ""
+    bedrock_chat_model: str = "anthropic.claude-3-haiku-20240307-v1:0"
 
     @property
     def repo_root(self) -> Path:

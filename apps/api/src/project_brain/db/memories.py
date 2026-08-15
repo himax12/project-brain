@@ -6,6 +6,7 @@ from uuid import UUID
 import psycopg
 
 from project_brain.db.events import append_event
+from project_brain.serialize import vector_literal
 
 
 class MemoryRepo:
@@ -118,6 +119,162 @@ class MemoryRepo:
             actor=actor,
         )
         return dict(row)
+
+    def set_embedding(self, memory_id: UUID, embedding: list[float]) -> None:
+        self.conn.execute(
+            """
+            UPDATE memories
+            SET embedding = %s::VECTOR, updated_at = now()
+            WHERE id = %s
+            """,
+            (vector_literal(embedding), memory_id),
+        )
+
+    def list_active(
+        self,
+        org_id: str,
+        repo_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT id, statement, rationale, category, tags, polarity, importance,
+                   status, supersedes_id, invalid_at, updated_at
+            FROM memories
+            WHERE org_id = %s AND repo_id = %s AND status = 'active'
+            ORDER BY (polarity = 'must_not') DESC, importance DESC, updated_at DESC
+            LIMIT %s
+            """,
+            (org_id, repo_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def search_active(
+        self,
+        org_id: str,
+        repo_id: str,
+        query: str,
+        embedding: list[float] | None,
+        *,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        like = f"%{query}%"
+        hits: dict[str, dict[str, Any]] = {}
+        fts = self.conn.execute(
+            """
+            SELECT id, statement, rationale, category, tags, polarity, importance,
+                   status, supersedes_id, invalid_at, embedding
+            FROM memories
+            WHERE org_id = %s AND repo_id = %s AND status = 'active'
+              AND (statement ILIKE %s OR COALESCE(rationale, '') ILIKE %s)
+            LIMIT %s
+            """,
+            (org_id, repo_id, like, like, limit),
+        ).fetchall()
+        for row in fts:
+            item = dict(row)
+            item["score"] = 0.82
+            item["why"] = "fts"
+            hits[str(item["id"])] = item
+        if embedding:
+            try:
+                vec = self.conn.execute(
+                    """
+                    SELECT id, statement, rationale, category, tags, polarity, importance,
+                           status, supersedes_id, invalid_at, embedding,
+                           (embedding <=> %s::VECTOR) AS dist
+                    FROM memories
+                    WHERE org_id = %s AND repo_id = %s AND status = 'active'
+                      AND embedding IS NOT NULL
+                    ORDER BY dist ASC
+                    LIMIT %s
+                    """,
+                    (vector_literal(embedding), org_id, repo_id, limit),
+                ).fetchall()
+            except Exception:
+                vec = []
+            for row in vec:
+                item = dict(row)
+                dist = float(item.pop("dist") or 1.0)
+                score = max(0.0, 1.0 - dist)
+                existing = hits.get(str(item["id"]))
+                if existing:
+                    existing["score"] = max(float(existing["score"]), score)
+                    existing["why"] = "hybrid"
+                else:
+                    item["score"] = score
+                    item["why"] = "vector"
+                    hits[str(item["id"])] = item
+        ranked = sorted(hits.values(), key=lambda r: float(r.get("score") or 0), reverse=True)
+        return ranked[:limit]
+
+    def search_superseded(
+        self,
+        org_id: str,
+        repo_id: str,
+        query: str,
+        *,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        like = f"%{query}%"
+        rows = self.conn.execute(
+            """
+            SELECT id, statement, polarity, status, invalid_at, supersedes_id
+            FROM memories
+            WHERE org_id = %s AND repo_id = %s
+              AND (status = 'superseded' OR invalid_at IS NOT NULL)
+              AND statement ILIKE %s
+            LIMIT %s
+            """,
+            (org_id, repo_id, like, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def resolve_switch(
+        self,
+        pending_id: UUID,
+        existing_id: UUID,
+        org_id: str,
+        repo_id: str,
+        *,
+        actor: str | None = None,
+    ) -> dict[str, Any]:
+        pending = self.get(pending_id, org_id, repo_id)
+        if not pending or pending.get("status") != "pending_review":
+            raise ValueError("resolve_failed: pending not found")
+        old = self.conn.execute(
+            """
+            UPDATE memories
+            SET status = 'superseded', invalid_at = now(), updated_at = now()
+            WHERE id = %s AND org_id = %s AND repo_id = %s AND status = 'active'
+            RETURNING *
+            """,
+            (existing_id, org_id, repo_id),
+        ).fetchone()
+        if old is None:
+            raise ValueError("resolve_failed: existing not active")
+        new = self.conn.execute(
+            """
+            UPDATE memories
+            SET status = 'active', supersedes_id = %s, updated_at = now()
+            WHERE id = %s AND org_id = %s AND repo_id = %s AND status = 'pending_review'
+            RETURNING *
+            """,
+            (existing_id, pending_id, org_id, repo_id),
+        ).fetchone()
+        if new is None:
+            raise ValueError("resolve_failed: could not activate pending")
+        append_event(
+            self.conn,
+            org_id=org_id,
+            repo_id=repo_id,
+            event_type="conflict_switched",
+            memory_id=pending_id,
+            actor=actor,
+            payload={"superseded": str(existing_id)},
+        )
+        return {"old": dict(old), "new": dict(new)}
 
     def reject(
         self,

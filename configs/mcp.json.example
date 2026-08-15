@@ -10,6 +10,12 @@
         "-m",
         "project_brain.mcp.server"
       ]
+    },
+    "cockroachdb": {
+      "url": "REPLACE_WITH_COCKROACH_MANAGED_MCP_URL",
+      "headers": {
+        "Authorization": "Bearer REPLACE_WITH_TOKEN"
+      }
     }
   }
 }

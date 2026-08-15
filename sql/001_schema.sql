@@ -49,3 +49,16 @@ CREATE TABLE IF NOT EXISTS memory_events (
 
 CREATE INDEX IF NOT EXISTS memory_events_memory_idx
   ON memory_events (memory_id);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id STRING NOT NULL,
+  repo_id STRING NOT NULL,
+  session_id STRING NOT NULL,
+  role STRING NOT NULL DEFAULT 'user',
+  content STRING NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS chat_messages_scope_idx
+  ON chat_messages (org_id, repo_id, session_id);
