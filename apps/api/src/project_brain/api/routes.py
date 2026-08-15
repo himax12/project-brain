@@ -15,7 +15,12 @@ from project_brain.graphs.session_boot import get_context
 from project_brain.serialize import public_memory
 from project_brain.services.deny_list import deny_reason
 from project_brain.services.embeddings import embed_text
-from project_brain.services.governance import confirm_and_embed, ingest_session, remember_decision
+from project_brain.services.governance import (
+    confirm_and_embed,
+    ingest_local_chat,
+    ingest_session,
+    remember_decision,
+)
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_api_key)])
 
@@ -50,6 +55,13 @@ class RecallBody(BaseModel):
 class IngestBody(BaseModel):
     transcript: str
     session_id: str = "explicit"
+    org_id: str | None = None
+    repo_id: str | None = None
+    actor: str | None = None
+
+
+class IngestLocalBody(BaseModel):
+    path: str | None = None
     org_id: str | None = None
     repo_id: str | None = None
     actor: str | None = None
@@ -125,6 +137,20 @@ def ingest_route(body: IngestBody) -> dict:
         session_id=body.session_id,
         actor=body.actor,
     )
+
+
+@router.post("/ingest_local_chat")
+def ingest_local_route(body: IngestLocalBody) -> dict:
+    org_id, repo_id = _scope(body.org_id, body.repo_id)
+    result = ingest_local_chat(
+        org_id=org_id,
+        repo_id=repo_id,
+        path=body.path,
+        actor=body.actor,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result)
+    return result
 
 
 @router.post("/resolve_conflict")

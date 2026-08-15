@@ -11,6 +11,11 @@ from project_brain.services.conflicts import find_conflicts
 from project_brain.services.deny_list import deny_reason
 from project_brain.services.embeddings import embed_text
 from project_brain.services.extract import extract_candidates
+from project_brain.services.local_chat import (
+    extract_corpus,
+    latest_transcript_path,
+    parse_chat_file,
+)
 
 
 def remember_decision(
@@ -111,4 +116,61 @@ def ingest_session(
         "count": len(created),
         "conflicted": skipped_conflicts,
         "note": "candidates stay pending_review until confirm (Lean E)",
+    }
+
+
+def ingest_local_chat(
+    *,
+    org_id: str,
+    repo_id: str,
+    path: str | None = None,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    """Explicit: local Cursor/Claude/GPT export → chat_messages + pending decisions."""
+    from pathlib import Path
+
+    target = Path(path) if path else latest_transcript_path()
+    if target is None or not target.exists():
+        return {
+            "ok": False,
+            "error": "no_transcript",
+            "hint": "Pass a .jsonl/.json/.txt path, or set CURSOR_TRANSCRIPTS_DIR",
+        }
+    turns = parse_chat_file(target)
+    if not turns:
+        return {"ok": False, "error": "empty_transcript", "path": str(target)}
+    session_id = target.stem[:80]
+    keep = turns[-40:]
+    with get_connection() as conn:
+        chat = ChatRepo(conn)
+        for turn in keep:
+            chat.append(
+                org_id=org_id,
+                repo_id=repo_id,
+                session_id=session_id,
+                role=turn["role"] if turn["role"] in {"user", "assistant"} else "user",
+                content=turn["content"][:8000],
+            )
+    corpus = extract_corpus(keep)
+    created: list[dict[str, Any]] = []
+    for cand in extract_candidates(corpus):
+        result = remember_decision(
+            org_id=org_id,
+            repo_id=repo_id,
+            statement=cand["statement"],
+            rationale=cand.get("rationale") or f"from {target.name}",
+            category=cand.get("category"),
+            polarity=cand.get("polarity") or "must",
+            actor=actor,
+            source="bedrock_extract",
+        )
+        if result.get("ok"):
+            created.append(result)
+    return {
+        "ok": True,
+        "path": str(target),
+        "turns": len(keep),
+        "created": created,
+        "count": len(created),
+        "note": "local chat is evidence; confirm in inbox to make law",
     }

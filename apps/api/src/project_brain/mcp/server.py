@@ -13,7 +13,12 @@ from project_brain.graphs.session_boot import get_context
 from project_brain.serialize import public_memory
 from project_brain.services.deny_list import deny_reason
 from project_brain.services.embeddings import embed_text
-from project_brain.services.governance import confirm_and_embed, ingest_session, remember_decision
+from project_brain.services.governance import (
+    confirm_and_embed,
+    ingest_local_chat,
+    ingest_session,
+    remember_decision,
+)
 
 mcp = MCPServer("project-brain")
 
@@ -95,6 +100,18 @@ def ingest_session_tool(
         session_id=session_id,
         actor=actor,
     )
+
+
+@mcp.tool(name="ingest_local_chat")
+def ingest_local_chat_tool(
+    path: str | None = None,
+    org_id: str | None = None,
+    repo_id: str | None = None,
+    actor: str | None = None,
+) -> dict:
+    """Pull Cursor/Claude/GPT local chat export into pending memories. Does not auto-activate."""
+    org_id, repo_id = _scope(org_id, repo_id)
+    return ingest_local_chat(org_id=org_id, repo_id=repo_id, path=path, actor=actor)
 
 
 @mcp.tool()
