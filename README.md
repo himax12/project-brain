@@ -37,16 +37,29 @@ Next.js    ──HTTP────────► FastAPI ──► same package
 apps/api     uv Python — FastAPI + MCP + LangGraph
 apps/web     Next.js HITL (pending / context / recall)
 sql/         001_schema.sql, 002_vector_index.sql
-scripts/     migrate.py, smoke_v0.py
+scripts/     migrate.py, smoke_v0.py, setup_crdb.ps1
+docker-compose.yml
 configs/     mcp.json.example
 ```
 
 ## Setup
 
-1. Create a CockroachDB Cloud cluster. Copy the Postgres URL.
-2. Copy `.env.example` → `.env` at the repo root. Set `DATABASE_URL`.
-3. Optional: AWS keys + Bedrock model access; then `EMBED_STUB=0`.
-4. Migrate and smoke:
+### A. Local CockroachDB (fastest)
+
+```powershell
+cd C:\Users\ghima\Desktop\project-brain
+docker compose up -d
+# or: powershell -File scripts\setup_crdb.ps1
+copy .env.example .env
+```
+
+`.env` default URL is `postgresql://root@localhost:26257/defaultdb?sslmode=disable`. UI on http://localhost:8081.
+
+### B. CockroachDB Cloud
+
+Create a cluster, copy the Postgres URL into `.env` as `DATABASE_URL` (`sslmode=verify-full`).
+
+Then migrate and smoke:
 
 ```powershell
 cd C:\Users\ghima\Desktop\project-brain\apps\api
@@ -56,7 +69,7 @@ uv run python ..\..\scripts\smoke_v0.py
 uv run pytest
 ```
 
-5. API:
+API:
 
 ```powershell
 uv run uvicorn project_brain.api.main:app --reload --app-dir src
@@ -65,7 +78,7 @@ uv run uvicorn project_brain.api.main:app --reload --app-dir src
 - Health: http://127.0.0.1:8000/healthz  
 - Swagger: http://127.0.0.1:8000/docs — header `X-API-Key: dev-local-key-change-me`
 
-6. UI (Node 22):
+UI (Node 22):
 
 ```powershell
 cd C:\Users\ghima\Desktop\project-brain\apps\web
@@ -109,6 +122,6 @@ Use Skills while writing SQL / VECTOR DDL; Project Brain still owns product memo
 
 ## Video / Devpost
 
-See [DEVPOST.md](./DEVPOST.md). License: [MIT](./LICENSE).
+See [DEVPOST.md](./DEVPOST.md), [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md), and [video/SCRIPT.md](./video/SCRIPT.md). License: [MIT](./LICENSE).
 
 Repo is private until you switch it public for submission: `gh repo edit himax12/project-brain --visibility public`.

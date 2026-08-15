@@ -1,5 +1,5 @@
-# Project Brain schema — Phase 1
-# CockroachDB. VECTOR index: add after confirming version-specific DDL.
+-- Project Brain schema — Phase 1
+-- CockroachDB. VECTOR index: add after confirming version-specific DDL.
 
 CREATE TABLE IF NOT EXISTS memories (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS memories (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   invalid_at TIMESTAMPTZ NULL,
+  CONSTRAINT memories_scope_nonempty CHECK (org_id <> '' AND repo_id <> ''),
   CONSTRAINT memories_polarity_check CHECK (polarity IN ('must', 'must_not', 'advisory')),
   CONSTRAINT memories_status_check CHECK (
     status IN ('pending_review', 'active', 'rejected', 'superseded')
