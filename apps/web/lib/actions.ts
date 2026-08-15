@@ -44,3 +44,24 @@ export async function ingestTranscript(org: string, repo: string, transcript: st
   });
   revalidatePath("/pending");
 }
+
+export async function resolveConflict(
+  pendingId: string,
+  existingId: string,
+  choice: "keep_existing" | "switch_to_pending",
+  org: string,
+  repo: string,
+) {
+  await api("/v1/resolve_conflict", {
+    method: "POST",
+    body: JSON.stringify({
+      pending_id: pendingId,
+      existing_id: existingId,
+      choice,
+      org_id: org,
+      repo_id: repo,
+    }),
+  });
+  revalidatePath("/pending");
+  revalidatePath("/context");
+}

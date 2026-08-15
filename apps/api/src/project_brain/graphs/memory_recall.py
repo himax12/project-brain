@@ -5,6 +5,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from project_brain.db.chat import ChatRepo
+from project_brain.db.events import append_event
 from project_brain.db.memories import MemoryRepo
 from project_brain.db.pool import get_connection
 from project_brain.packets import recall_packet, scored_item
@@ -64,6 +65,13 @@ def search(state: MemoryRecallState) -> MemoryRecallState:
             chat_hits = ChatRepo(conn).search(
                 state["org_id"], state["repo_id"], query, limit=5
             )
+        append_event(
+            conn,
+            org_id=state["org_id"],
+            repo_id=state["repo_id"],
+            event_type="recalled",
+            payload={"query": query, "hits": len(candidates)},
+        )
     do_not_use = [str(r["id"]) for r in superseded]
     evidence = [
         {

@@ -11,10 +11,10 @@
         "project_brain.mcp.server"
       ]
     },
-    "cockroachdb": {
-      "url": "REPLACE_WITH_COCKROACH_MANAGED_MCP_URL",
+    "cockroachdb-cloud": {
+      "url": "https://cockroachlabs.cloud/mcp",
       "headers": {
-        "Authorization": "Bearer REPLACE_WITH_TOKEN"
+        "mcp-cluster-id": "YOUR_CLUSTER_UUID"
       }
     }
   }

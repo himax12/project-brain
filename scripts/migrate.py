@@ -14,7 +14,7 @@ def _statements(sql: str) -> list[str]:
     buf: list[str] = []
     for line in sql.splitlines():
         stripped = line.strip()
-        if not stripped or stripped.startswith("--"):
+        if not stripped or stripped.startswith("--") or stripped.startswith("#"):
             continue
         buf.append(line)
         if stripped.endswith(";"):
@@ -47,6 +47,18 @@ def main() -> None:
     conn = connect()
     try:
         apply_file(conn, ROOT / "sql" / "001_schema.sql")
+        try:
+            prev = conn.autocommit
+            conn.autocommit = True
+            conn.execute("SET CLUSTER SETTING feature.vector_index.enabled = true")
+            conn.autocommit = prev
+            print("enabled feature.vector_index.enabled")
+        except Exception as exc:
+            print(f"could not enable vector index setting: {exc}")
+            try:
+                conn.autocommit = False
+            except Exception:
+                pass
         apply_file(conn, ROOT / "sql" / "002_vector_index.sql", optional=True)
     finally:
         conn.close()

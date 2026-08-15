@@ -1,14 +1,15 @@
 import Link from "next/link";
 import { api, qs } from "@/lib/api";
-import { confirmMemory, rejectMemory, rememberMemory } from "@/lib/actions";
+import { confirmMemory, rejectMemory, rememberMemory, resolveConflict } from "@/lib/actions";
 import { ScopeBar, scopeFrom } from "../scope";
 
+type Conflict = { id: string; statement?: string };
 type Item = {
   id: string;
   statement: string;
   polarity: string;
-  conflicts?: unknown;
-  provenance?: { conflicts?: unknown[] };
+  conflicts?: Conflict[];
+  provenance?: { conflicts?: Conflict[] };
 };
 
 export default async function PendingPage({
@@ -70,7 +71,20 @@ export default async function PendingPage({
           </div>
           <p>{item.statement}</p>
           {item.provenance?.conflicts?.length ? (
-            <p className="muted">Conflicts flagged — confirm still allowed; prefer resolve if replacing law.</p>
+            <div>
+              <p className="muted">Conflicts with active law — keep existing or switch.</p>
+              {item.provenance.conflicts.map((c) => (
+                <div className="row" key={c.id}>
+                  <span className="muted">{c.statement || c.id}</span>
+                  <form action={resolveConflict.bind(null, item.id, c.id, "keep_existing", org, repo)}>
+                    <button type="submit">Keep existing</button>
+                  </form>
+                  <form action={resolveConflict.bind(null, item.id, c.id, "switch_to_pending", org, repo)}>
+                    <button type="submit">Switch to this</button>
+                  </form>
+                </div>
+              ))}
+            </div>
           ) : null}
           <div className="row">
             <form action={confirmMemory.bind(null, item.id, org, repo)}>
