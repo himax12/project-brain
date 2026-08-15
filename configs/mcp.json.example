@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "project-brain": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "C:/Users/ghima/Desktop/project-brain/apps/api",
+        "python",
+        "-m",
+        "project_brain.mcp.server"
+      ]
+    }
+  }
+}
