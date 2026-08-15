@@ -101,6 +101,19 @@ Restart Cursor, then:
 4. `recall` with a policy question — packet, not a flat list
 5. Managed MCP: `SELECT id, statement, status FROM memories WHERE status = 'active';`
 
+### Local chat → memory (Cursor / Claude / GPT)
+
+Chat windows stay **local evidence**. CockroachDB stays **law**.
+
+```powershell
+# MCP (after reload): ingest_local_chat
+# or HTTP:
+# POST /v1/ingest_local_chat  { "path": "optional.jsonl" }
+# empty path = newest file under %USERPROFILE%\.cursor\projects\...\agent-transcripts
+```
+
+Then confirm in http://localhost:3000/pending. Episode recall can `search_chat` those stored turns; they never get `must_obey` until confirmed.
+
 ### CockroachDB Skills (optional maximize)
 
 ```powershell
